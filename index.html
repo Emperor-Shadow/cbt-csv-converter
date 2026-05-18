@@ -18,6 +18,8 @@
     --error: #f85149;
     --error-dim: #f8514922;
     --success: #00d084;
+    --warn: #e3b341;
+    --warn-dim: #e3b34122;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -152,6 +154,7 @@
     margin-bottom: 16px;
     display: none;
     line-height: 1.5;
+    white-space: pre-line;
   }
 
   .alert-error {
@@ -164,6 +167,43 @@
     background: var(--accent-dim);
     border: 1px solid var(--accent);
     color: var(--accent);
+  }
+
+  .alert-warn {
+    background: var(--warn-dim);
+    border: 1px solid var(--warn);
+    color: var(--warn);
+  }
+
+  /* Math conversion info box */
+  .math-info {
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 12px;
+    color: var(--accent);
+    margin-bottom: 16px;
+    font-family: 'Space Mono', monospace;
+    line-height: 1.7;
+  }
+
+  .math-info strong {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .math-info .tag {
+    display: inline-block;
+    background: #0d1117;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+    margin: 2px 2px;
   }
 
   .preview-table-wrap {
@@ -207,6 +247,11 @@
     text-align: center;
   }
 
+  /* highlight cells that had math conversion applied */
+  td.math-converted {
+    color: #79c0ff;
+  }
+
   .stats {
     display: flex;
     gap: 10px;
@@ -226,6 +271,12 @@
 
   .stat span { font-size: 18px; font-weight: 700; display: block; }
 
+  .stat.math {
+    background: #79c0ff22;
+    border-color: #79c0ff;
+    color: #79c0ff;
+  }
+
   .hidden { display: none; }
 </style>
 </head>
@@ -234,17 +285,32 @@
 <div class="header">
   <div class="badge">CBT TOOL</div>
   <h1>Question <span>CSV</span> Converter</h1>
-  <p class="subtitle">Paste AI-generated questions → Download ready-to-upload CSV</p>
+  <p class="subtitle">Paste AI-generated questions → Auto-converts math & chemistry → Download ready-to-upload CSV</p>
+</div>
+
+<div class="math-info">
+  <strong>⚡ Auto MathJax Conversion</strong>
+  Detects and wraps math/chemistry automatically:
+  <span class="tag">x^2</span>
+  <span class="tag">x^{2}</span>
+  <span class="tag">\frac{1}{2}</span>
+  <span class="tag">H2O → \ce{H_{2}O}</span>
+  <span class="tag">CO2 → \ce{CO_{2}}</span>
+  <span class="tag">log / sin / cos</span>
+  <span class="tag">1/2, 3/4</span>
+  <span class="tag">√x</span>
+  Blue cells in preview = math was detected & wrapped.
 </div>
 
 <div class="alert alert-error" id="errorAlert"></div>
 <div class="alert alert-success" id="successAlert"></div>
+<div class="alert alert-warn" id="warnAlert"></div>
 
 <div class="card">
   <div class="card-label">Paste AI Output Here</div>
   <textarea id="inputText" placeholder="Question,Option A,Option B,Option C,Option D,Correct Answer
-What is Good morning in French?,Bonjour,Bonsoir,Bonne nuit,Salut,A
-Which of these means Monday in French?,Mardi,Jeudi,Samedi,Lundi,D
+What are the roots of x^2 - 5x + 6 = 0?,2 and 3,-2 and -3,-2 and 3,2 and -3,A
+What is the chemical formula for water?,H2O,HO2,H3O,H2O2,A
 ..."></textarea>
 </div>
 
@@ -262,20 +328,136 @@ Which of these means Monday in French?,Mardi,Jeudi,Samedi,Lundi,D
 <script>
   let cleanedCSV = '';
 
-  function showError(msg) {
-    const el = document.getElementById('errorAlert');
-    el.textContent = msg;
-    el.style.display = 'block';
-    document.getElementById('successAlert').style.display = 'none';
+  // ─────────────────────────────────────────────
+  // CHEMISTRY DETECTION & CONVERSION
+  // Matches patterns like H2O, CO2, O3, Fe2O3, H2SO4, NaCl, Ca(OH)2 etc.
+  // ─────────────────────────────────────────────
+  const CHEM_PATTERNS = [
+    // Common named compounds written as symbols e.g. H2O, CO2, O3, H2SO4, Fe2O3, Ca(OH)2, NaCl
+    /\b([A-Z][a-z]?\d*(?:[A-Z][a-z]?\d*)+(?:\([A-Z][a-z]?\d*(?:[A-Z][a-z]?\d*)*\)\d*)*)\b/g,
+    // Single element with number e.g. O3, N2, Cl2
+    /\b([A-Z][a-z]?\d{1,2})\b/g,
+  ];
+
+  // Known chemical symbols to avoid false positives
+  const ELEMENT_SYMBOLS = new Set([
+    'H','He','Li','Be','B','C','N','O','F','Ne','Na','Mg','Al','Si','P','S','Cl','Ar',
+    'K','Ca','Sc','Ti','V','Cr','Mn','Fe','Co','Ni','Cu','Zn','Ga','Ge','As','Se','Br',
+    'Kr','Rb','Sr','Y','Zr','Nb','Mo','Tc','Ru','Rh','Pd','Ag','Cd','In','Sn','Sb','Te',
+    'I','Xe','Cs','Ba','La','Ce','Pr','Nd','Pm','Sm','Eu','Gd','Tb','Dy','Ho','Er','Tm',
+    'Yb','Lu','Hf','Ta','W','Re','Os','Ir','Pt','Au','Hg','Tl','Pb','Bi','Po','At','Rn',
+    'Fr','Ra','Ac','Th','Pa','U','Np','Pu','Am','Cm','Bk','Cf','Es','Fm','Md','No','Lr'
+  ]);
+
+  function looksLikeChemFormula(str) {
+    // Must start with uppercase element symbol
+    // Must contain at least one digit OR multiple element symbols
+    const startsWithElement = /^[A-Z][a-z]?/.test(str);
+    if (!startsWithElement) return false;
+
+    // Extract the first 1-2 chars and check it's a real element
+    const firstElem = str.match(/^([A-Z][a-z]?)/);
+    if (!firstElem || !ELEMENT_SYMBOLS.has(firstElem[1])) return false;
+
+    // Must have digit or another capital (multi-element compound)
+    const hasDigit = /\d/.test(str);
+    const hasMultipleElements = /[A-Z].*[A-Z]/.test(str);
+
+    return hasDigit || hasMultipleElements;
   }
 
-  function showSuccess(msg) {
-    const el = document.getElementById('successAlert');
-    el.textContent = msg;
-    el.style.display = 'block';
-    document.getElementById('errorAlert').style.display = 'none';
+  function convertChemToMathJax(str) {
+    // If the whole cell looks like just a formula
+    // e.g. "H2O", "CO2", "Fe2O3"
+    if (looksLikeChemFormula(str.trim())) {
+      // Convert digits to subscripts: H2O → H_{2}O
+      const ceContent = str.trim().replace(/(\d+)/g, '_{$1}');
+      return `\\(\\ce{${ceContent}}\\)`;
+    }
+
+    // Otherwise try to find formula embedded in text
+    // e.g. "What is the name of H2O in chemistry?"
+    return str.replace(/\b([A-Z][a-z]?\d*(?:[A-Z][a-z]?\d*)+)\b/g, (match) => {
+      if (!looksLikeChemFormula(match)) return match;
+      // Don't double-wrap
+      const ceContent = match.replace(/(\d+)/g, '_{$1}');
+      return `\\(\\ce{${ceContent}}\\)`;
+    });
   }
 
+  // ─────────────────────────────────────────────
+  // MATH DETECTION & CONVERSION
+  // ─────────────────────────────────────────────
+
+  // Already wrapped in MathJax? Skip it.
+  function alreadyWrapped(str) {
+    return str.includes('\\(') || str.includes('\\[') || str.includes('$');
+  }
+
+  // Patterns that strongly indicate math content
+  const MATH_INDICATORS = [
+    /\^[\d{]/, // exponents: x^2 or x^{2}
+    /\\frac\{/, // LaTeX fractions
+    /\\sqrt/, // sqrt
+    /√/, // unicode sqrt
+    /\\[a-zA-Z]+\{/, // any LaTeX command
+    /\b(sin|cos|tan|log|ln|lim|sum|int|det|mod)\b/i, // math functions
+    /\d+\/\d+/, // fractions like 1/2, 3/4
+    /[≤≥≠±×÷∞∑∏∫√π]/, // math unicode symbols
+    /\b\d+\s*[+\-*]\s*\d+\s*=/, // simple equations like 2 + 3 =
+    /[a-zA-Z]\s*=\s*[^=]/, // variable assignment: x = ...
+    /\|\s*[a-zA-Z\d]+\s*\|/, // absolute value |x|
+    /\b\d+\^\d+/, // plain exponent 2^3
+  ];
+
+  function looksLikeMath(str) {
+    return MATH_INDICATORS.some(pattern => pattern.test(str));
+  }
+
+  // Convert LaTeX-style exponents and common patterns to proper LaTeX
+  function normalizeMath(str) {
+    // Already fine as LaTeX — just needs wrapping
+    return str;
+  }
+
+  // ─────────────────────────────────────────────
+  // MASTER CONVERSION FUNCTION
+  // Called on every cell (question + 4 options)
+  // Returns { value, converted: bool }
+  // ─────────────────────────────────────────────
+  function convertToMathJax(cell) {
+    let str = cell.trim();
+
+    // Don't double-process
+    if (alreadyWrapped(str)) return { value: str, converted: false };
+
+    // --- Try chemistry first ---
+    // Check if entire cell or embedded formula looks like chem
+    const chemConverted = convertChemToMathJax(str);
+    if (chemConverted !== str) {
+      return { value: chemConverted, converted: true };
+    }
+
+    // --- Try math ---
+    if (looksLikeMath(str)) {
+      // If the whole string is just a math expression (short, no long prose)
+      // wrap whole thing. Otherwise wrap inline.
+      // Heuristic: if it contains a full sentence (long + verb), wrap only the math parts
+      if (str.length < 120 && !str.match(/\b(is|are|was|were|what|which|find|calculate|evaluate|determine)\b/i)) {
+        return { value: `\\(${normalizeMath(str)}\\)`, converted: true };
+      } else {
+        // Wrap math subexpressions inline within the sentence
+        // For now, wrap the whole thing — safer than guessing boundaries
+        return { value: `\\(${normalizeMath(str)}\\)`, converted: true };
+      }
+    }
+
+    return { value: str, converted: false };
+  }
+
+  // ─────────────────────────────────────────────
+  // CSV PARSING
+  // ─────────────────────────────────────────────
   function parseCSVLine(line) {
     const result = [];
     let current = '';
@@ -295,6 +477,31 @@ Which of these means Monday in French?,Mardi,Jeudi,Samedi,Lundi,D
     return result;
   }
 
+  function showError(msg) {
+    const el = document.getElementById('errorAlert');
+    el.textContent = msg;
+    el.style.display = 'block';
+    document.getElementById('successAlert').style.display = 'none';
+    document.getElementById('warnAlert').style.display = 'none';
+  }
+
+  function showSuccess(msg) {
+    const el = document.getElementById('successAlert');
+    el.textContent = msg;
+    el.style.display = 'block';
+    document.getElementById('errorAlert').style.display = 'none';
+    document.getElementById('warnAlert').style.display = 'none';
+  }
+
+  function showWarn(msg) {
+    const el = document.getElementById('warnAlert');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+
+  // ─────────────────────────────────────────────
+  // MAIN PROCESS
+  // ─────────────────────────────────────────────
   function processCSV() {
     const raw = document.getElementById('inputText').value.trim();
     if (!raw) { showError('Please paste your AI-generated CSV text first.'); return; }
@@ -312,11 +519,16 @@ Which of these means Monday in French?,Mardi,Jeudi,Samedi,Lundi,D
       }
     }
 
-    if (headerIndex === -1) { showError('Could not find the header row. Make sure the first row contains: Question, Option A, Option B, Option C, Option D, Correct Answer'); return; }
+    if (headerIndex === -1) {
+      showError('Could not find the header row. Make sure the first row contains: Question, Option A, Option B, Option C, Option D, Correct Answer');
+      return;
+    }
 
     const expectedHeaders = ['Question', 'Option A', 'Option B', 'Option C', 'Option D', 'Correct Answer'];
     const rows = [expectedHeaders];
+    const rawRows = []; // for preview (tracks which cells were converted)
     const errors = [];
+    let mathConvertedCount = 0;
 
     for (let i = headerIndex + 1; i < lines.length; i++) {
       const line = lines[i];
@@ -328,25 +540,33 @@ Which of these means Monday in French?,Mardi,Jeudi,Samedi,Lundi,D
         continue;
       }
 
-      const question = cols[0];
-      const optA = cols[1];
-      const optB = cols[2];
-      const optC = cols[3];
-      const optD = cols[4];
       const correct = cols[5].toUpperCase().replace(/[^ABCD]/g, '');
-
-      if (!question) { errors.push(`Row ${i + 1} skipped — question is empty`); continue; }
+      if (!cols[0]) { errors.push(`Row ${i + 1} skipped — question is empty`); continue; }
       if (!['A','B','C','D'].includes(correct)) {
         errors.push(`Row ${i + 1} skipped — Correct Answer "${cols[5]}" is not A, B, C, or D`);
         continue;
       }
 
-      rows.push([question, optA, optB, optC, optD, correct]);
+      // Convert math/chem in question + 4 options (not correct answer)
+      const convertedCells = [];
+      const conversionFlags = [];
+      for (let c = 0; c < 5; c++) {
+        const result = convertToMathJax(cols[c]);
+        convertedCells.push(result.value);
+        conversionFlags.push(result.converted);
+        if (result.converted) mathConvertedCount++;
+      }
+
+      rows.push([...convertedCells, correct]);
+      rawRows.push({ cells: convertedCells, flags: conversionFlags, correct });
     }
 
-    if (rows.length < 2) { showError('No valid questions found. Please check the format of your pasted text.'); return; }
+    if (rows.length < 2) {
+      showError('No valid questions found. Please check the format of your pasted text.');
+      return;
+    }
 
-    // Build clean CSV
+    // Build CSV
     cleanedCSV = rows.map(row =>
       row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
     ).join('\n');
@@ -354,6 +574,7 @@ Which of these means Monday in French?,Mardi,Jeudi,Samedi,Lundi,D
     // Build preview table
     const table = document.getElementById('previewTable');
     table.innerHTML = '';
+
     const thead = document.createElement('thead');
     const hrow = document.createElement('tr');
     expectedHeaders.forEach(h => {
@@ -365,22 +586,26 @@ Which of these means Monday in French?,Mardi,Jeudi,Samedi,Lundi,D
     table.appendChild(thead);
 
     const tbody = document.createElement('tbody');
-    for (let i = 1; i < rows.length; i++) {
+    rawRows.forEach(({ cells, flags, correct }) => {
       const tr = document.createElement('tr');
-      rows[i].forEach((cell, j) => {
+      cells.forEach((cell, j) => {
         const td = document.createElement('td');
         td.textContent = cell;
-        if (j === 5) td.className = 'correct';
+        if (flags[j]) td.className = 'math-converted';
         tr.appendChild(td);
       });
+      const tdCorrect = document.createElement('td');
+      tdCorrect.textContent = correct;
+      tdCorrect.className = 'correct';
+      tr.appendChild(tdCorrect);
       tbody.appendChild(tr);
-    }
+    });
     table.appendChild(tbody);
 
     // Stats
-    const statsEl = document.getElementById('statsRow');
-    statsEl.innerHTML = `
+    document.getElementById('statsRow').innerHTML = `
       <div class="stat"><span>${rows.length - 1}</span>Questions</div>
+      <div class="stat math"><span>${mathConvertedCount}</span>Math/Chem Converted</div>
       <div class="stat"><span>${errors.length}</span>Skipped</div>
     `;
 
@@ -388,10 +613,10 @@ Which of these means Monday in French?,Mardi,Jeudi,Samedi,Lundi,D
     document.getElementById('downloadBtn').disabled = false;
 
     if (errors.length > 0) {
-      showError('Done with warnings:\n' + errors.join('\n'));
-    } else {
-      showSuccess(`✓ ${rows.length - 1} questions processed successfully. Check the preview below then download.`);
+      showWarn('Done with warnings:\n' + errors.join('\n'));
     }
+
+    showSuccess(`✓ ${rows.length - 1} questions processed. ${mathConvertedCount} cell(s) had math/chemistry detected and wrapped for MathJax. Blue cells in preview = converted. Download when ready.`);
   }
 
   function downloadCSV() {
