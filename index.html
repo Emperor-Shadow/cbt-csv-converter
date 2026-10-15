@@ -499,6 +499,85 @@ What is the chemical formula for water?,H2O,HO2,H3O,H2O2,A
     el.style.display = 'block';
   }
 
+  function normalizeColumns(cols) {
+    if (cols.length === 6) return cols;
+    if (cols.length > 6) {
+      const question = cols[0];
+      const correct = cols[cols.length - 1];
+      const middle = cols.slice(1, -1);
+      // Handles unquoted commas inside options (e.g. "No, ...", "Yes, ...")
+      if (middle.length === 8) {
+        return [
+          question,
+          middle[0] + ', ' + middle[1],
+          middle[2] + ', ' + middle[3],
+          middle[4] + ', ' + middle[5],
+          middle[6] + ', ' + middle[7],
+          correct
+        ];
+      }
+    }
+    return cols;
+  }
+
+  function splitSingleLineCSV(raw) {
+    const headerMatch = raw.match(/^(.*?Correct\s*Answer)[\s,]+(.*)$/is);
+    if (!headerMatch) return raw.split('\n');
+    const header = headerMatch[1].trim();
+    const remaining = headerMatch[2].trim();
+    const lines = [header];
+
+    let currentTokens = [];
+    let currentToken = '';
+    let inQuotes = false;
+    let i = 0;
+
+    while (i < remaining.length) {
+      const ch = remaining[i];
+      if (ch === '"') {
+        inQuotes = !inQuotes;
+        currentToken += ch;
+        i++;
+      } else if (ch === ',' && !inQuotes) {
+        currentTokens.push(currentToken.trim());
+        currentToken = '';
+        i++;
+      } else if (!inQuotes && (ch === ' ' || ch === '\t') && currentTokens.length >= 5) {
+        const cleanToken = currentToken.replace(/\.$/, '').trim().toUpperCase();
+        if (['A', 'B', 'C', 'D'].includes(cleanToken)) {
+          currentTokens.push(cleanToken);
+          lines.push(currentTokens.join(','));
+          currentTokens = [];
+          currentToken = '';
+          while (i < remaining.length && (remaining[i] === ' ' || remaining[i] === '\t')) {
+            i++;
+          }
+          continue;
+        } else {
+          currentToken += ch;
+          i++;
+        }
+      } else {
+        currentToken += ch;
+        i++;
+      }
+    }
+
+    if (currentToken || currentTokens.length > 0) {
+      if (currentToken) currentTokens.push(currentToken.trim().replace(/\.$/, ''));
+      if (currentTokens.length >= 5) {
+        const lastIdx = currentTokens.length - 1;
+        const cleanLast = currentTokens[lastIdx].replace(/\.$/, '').trim().toUpperCase();
+        if (['A', 'B', 'C', 'D'].includes(cleanLast)) {
+          currentTokens[lastIdx] = cleanLast;
+          lines.push(currentTokens.join(','));
+        }
+      }
+    }
+
+    return lines;
+  }
+
   // ─────────────────────────────────────────────
   // MAIN PROCESS
   // ─────────────────────────────────────────────
@@ -518,10 +597,7 @@ What is the chemical formula for water?,H2O,HO2,H3O,H2O2,A
     // Check if newlines are missing (e.g. all rows pasted as a single line)
     let lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
     if (lines.length < 2) {
-      // Auto-split single-line CSV by detecting row boundaries
-      raw = raw.replace(/(Correct\s*Answer)\s*(?=")/i, '$1\n');
-      raw = raw.replace(/([,\s][A-Da-d]\.?)\s+(?=")/g, '$1\n');
-      lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      lines = splitSingleLineCSV(raw);
     }
 
     if (lines.length < 2) { showError('Not enough data. Make sure you pasted the full CSV including the header row.'); return; }
@@ -551,7 +627,8 @@ What is the chemical formula for water?,H2O,HO2,H3O,H2O2,A
       const line = lines[i];
       if (line.startsWith('#') || line === '') continue;
 
-      const cols = parseCSVLine(line);
+      let cols = parseCSVLine(line);
+      cols = normalizeColumns(cols);
       if (cols.length < 6) {
         errors.push(`Row ${i + 1} skipped — only ${cols.length} columns found (need 6)`);
         continue;
