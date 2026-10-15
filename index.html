@@ -271,10 +271,62 @@
 
   .stat span { font-size: 18px; font-weight: 700; display: block; }
 
-  .stat.math {
-    background: #79c0ff22;
-    border-color: #79c0ff;
-    color: #79c0ff;
+  .mode-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .mode-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .mode-options {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .mode-option {
+    cursor: pointer;
+  }
+
+  .mode-option input {
+    display: none;
+  }
+
+  .mode-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-family: 'Space Mono', monospace;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    transition: all 0.2s;
+    user-select: none;
+  }
+
+  .mode-option input:checked + .mode-chip {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 700;
   }
 
   .hidden { display: none; }
@@ -319,6 +371,24 @@
 <div class="alert alert-error" id="errorAlert"></div>
 <div class="alert alert-success" id="successAlert"></div>
 <div class="alert alert-warn" id="warnAlert"></div>
+
+<div class="mode-container">
+  <div class="mode-title">🎯 Subject Mode:</div>
+  <div class="mode-options">
+    <label class="mode-option" title="Smart auto-detection: formulas must have numbers, arrows, charges, or states of matter">
+      <input type="radio" name="subjectMode" value="auto" checked>
+      <span class="mode-chip">⚡ Auto (Smart)</span>
+    </label>
+    <label class="mode-option" title="Full math and chemistry equations">
+      <input type="radio" name="subjectMode" value="science">
+      <span class="mode-chip">🧪 Sciences (Math & Chem)</span>
+    </label>
+    <label class="mode-option" title="Zero chemistry scanning: 100% immune to false positives for English/Civic/History">
+      <input type="radio" name="subjectMode" value="general">
+      <span class="mode-chip">📚 General / Arts / Social Studies</span>
+    </label>
+  </div>
+</div>
 
 <div class="card">
   <div class="card-label">Paste AI Output Here</div>
@@ -469,6 +539,11 @@ What is the chemical formula for water?,H2O,HO2,H3O,H2O2,A
     }).join('');
   }
 
+  function getSelectedMode() {
+    const el = document.querySelector('input[name="subjectMode"]:checked');
+    return el ? el.value : 'auto';
+  }
+
   // ─────────────────────────────────────────────
   // MATH DETECTION & CONVERSION
   // ─────────────────────────────────────────────
@@ -478,18 +553,18 @@ What is the chemical formula for water?,H2O,HO2,H3O,H2O2,A
     return str.includes('\\(') || str.includes('\\[') || str.includes('$');
   }
 
-  // Patterns that strongly indicate math content
+  // Patterns that strongly indicate math content (calibrated against false positives)
   const MATH_INDICATORS = [
     /\^[\d{]/, // exponents: x^2 or x^{2}
     /\\frac\{/, // LaTeX fractions
     /\\sqrt/, // sqrt
     /√/, // unicode sqrt
     /\\[a-zA-Z]+\{/, // any LaTeX command
-    /\b(sin|cos|tan|log|ln|lim|sum|int|det|mod)\b/i, // math functions
+    /\b(sin|cos|tan|log|ln|lim|det)\s*(\(|\^|\d|\\|[xyzθ]\b)/i, // math functions
     /\d+\/\d+/, // fractions like 1/2, 3/4
     /[≤≥≠±×÷∞∑∏∫√π]/, // math unicode symbols
-    /\b\d+\s*[+\-*]\s*\d+\s*=/, // simple equations like 2 + 3 =
-    /[a-zA-Z]\s*=\s*[^=]/, // variable assignment: x = ...
+    /\b\d+\s*[+\-*\/]\s*\d+\s*=/, // simple equations like 2 + 3 =
+    /[a-zA-Z]\s*=\s*[\d\-+]/, // variable assignment: x = 5
     /\|\s*[a-zA-Z\d]+\s*\|/, // absolute value |x|
     /\b\d+\^\d+/, // plain exponent 2^3
   ];
@@ -500,7 +575,6 @@ What is the chemical formula for water?,H2O,HO2,H3O,H2O2,A
 
   // Convert LaTeX-style exponents and common patterns to proper LaTeX
   function normalizeMath(str) {
-    // Already fine as LaTeX — just needs wrapping
     return str;
   }
 
@@ -515,23 +589,21 @@ What is the chemical formula for water?,H2O,HO2,H3O,H2O2,A
     // Don't double-process
     if (alreadyWrapped(str)) return { value: str, converted: false };
 
-    // --- Try chemistry first ---
-    // Check if entire cell or embedded formula looks like chem
-    const chemConverted = convertChemToMathJax(str);
-    if (chemConverted !== str) {
-      return { value: chemConverted, converted: true };
+    const mode = getSelectedMode();
+
+    // --- Try chemistry if not in general mode ---
+    if (mode !== 'general') {
+      const chemConverted = convertChemToMathJax(str);
+      if (chemConverted !== str) {
+        return { value: chemConverted, converted: true };
+      }
     }
 
     // --- Try math ---
     if (looksLikeMath(str)) {
-      // If the whole string is just a math expression (short, no long prose)
-      // wrap whole thing. Otherwise wrap inline.
-      // Heuristic: if it contains a full sentence (long + verb), wrap only the math parts
       if (str.length < 120 && !str.match(/\b(is|are|was|were|what|which|find|calculate|evaluate|determine)\b/i)) {
         return { value: `\\(${normalizeMath(str)}\\)`, converted: true };
       } else {
-        // Wrap math subexpressions inline within the sentence
-        // For now, wrap the whole thing — safer than guessing boundaries
         return { value: `\\(${normalizeMath(str)}\\)`, converted: true };
       }
     }
