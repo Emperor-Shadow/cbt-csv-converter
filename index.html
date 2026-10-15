@@ -351,36 +351,45 @@ What is the chemical formula for water?,H2O,HO2,H3O,H2O2,A
 
   function looksLikeChemFormula(str) {
     str = str.trim();
-    // Chemical formulas do NOT contain spaces or multiple words
+    // 1. Never contains spaces or newlines
     if (/\s/.test(str)) return false;
 
-    // Must start with uppercase letter
+    // 2. Never contains two consecutive lowercase letters (e.g. Nephew, Cousin, Influenza, Mother)
+    if (/[a-z]{2,}/.test(str)) return false;
+
+    // 3. Must only contain valid chemical formula characters
+    if (!/^[A-Za-z0-9()\[\]+\-]+$/.test(str)) return false;
+
+    // 4. Must start with a capital letter
     if (!/^[A-Z]/.test(str)) return false;
 
-    // Reject common abbreviations and acronyms
+    // 5. Must NOT be a single letter (A, B, C, D are options/answers, not chemical formulas)
+    if (str.length === 1) return false;
+
+    // 6. Common abbreviations and acronyms
     if (/^(STI|HIV|DNA|RNA|AIDS|CBT|WHO|ICT|JAMB|WAEC|NECO|LGA|FCT|CPU|RAM|ROM|USB|PDF|CSV|STIS|AIDS)$/i.test(str)) {
       return false;
     }
 
-    // Must only contain letters, numbers, parentheses, brackets, or charges
-    if (!/^[A-Za-z0-9()\[\]+\-]+$/.test(str)) return false;
-
-    // Check first element symbol
-    const firstElem = str.match(/^([A-Z][a-z]?)/);
-    if (!firstElem || !ELEMENT_SYMBOLS.has(firstElem[1])) return false;
-
-    const hasDigit = /\d/.test(str);
-    const hasLowercaseElement = /[A-Z][a-z]/.test(str);
-
-    // If pure uppercase letters without digits (e.g. STI, HIV, CO, NO):
-    if (!hasDigit && !hasLowercaseElement) {
-      // 3 or more uppercase letters without numbers is almost always an acronym, not chemistry
+    // 7. If all uppercase letters with no digits (e.g. STI, HIV, CO, NO):
+    // In chemistry, all-caps without digits only happens for 2-element compounds like CO, NO.
+    // Anything 3 or more uppercase letters without digits is an acronym!
+    if (/^[A-Z]+$/.test(str)) {
       if (str.length > 2) return false;
-      // 2 uppercase letters (like CO, NO): both must be known elements
       return str.length === 2 && ELEMENT_SYMBOLS.has(str[0]) && ELEMENT_SYMBOLS.has(str[1]);
     }
 
-    return hasDigit || hasLowercaseElement;
+    // 8. Verify all elements in the formula exist in the periodic table
+    const withoutBracketsAndDigits = str.replace(/[()\[\]\d+\-]/g, '');
+    let elemOnlyLength = 0;
+    const elemOnlyPattern = /([A-Z][a-z]?)/g;
+    let match;
+    while ((match = elemOnlyPattern.exec(withoutBracketsAndDigits)) !== null) {
+      if (!ELEMENT_SYMBOLS.has(match[1])) return false;
+      elemOnlyLength += match[1].length;
+    }
+
+    return elemOnlyLength === withoutBracketsAndDigits.length;
   }
 
   function convertChemToMathJax(str) {
