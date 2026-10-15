@@ -350,20 +350,37 @@ What is the chemical formula for water?,H2O,HO2,H3O,H2O2,A
   ]);
 
   function looksLikeChemFormula(str) {
-    // Must start with uppercase element symbol
-    // Must contain at least one digit OR multiple element symbols
-    const startsWithElement = /^[A-Z][a-z]?/.test(str);
-    if (!startsWithElement) return false;
+    str = str.trim();
+    // Chemical formulas do NOT contain spaces or multiple words
+    if (/\s/.test(str)) return false;
 
-    // Extract the first 1-2 chars and check it's a real element
+    // Must start with uppercase letter
+    if (!/^[A-Z]/.test(str)) return false;
+
+    // Reject common abbreviations and acronyms
+    if (/^(STI|HIV|DNA|RNA|AIDS|CBT|WHO|ICT|JAMB|WAEC|NECO|LGA|FCT|CPU|RAM|ROM|USB|PDF|CSV|STIS|AIDS)$/i.test(str)) {
+      return false;
+    }
+
+    // Must only contain letters, numbers, parentheses, brackets, or charges
+    if (!/^[A-Za-z0-9()\[\]+\-]+$/.test(str)) return false;
+
+    // Check first element symbol
     const firstElem = str.match(/^([A-Z][a-z]?)/);
     if (!firstElem || !ELEMENT_SYMBOLS.has(firstElem[1])) return false;
 
-    // Must have digit or another capital (multi-element compound)
     const hasDigit = /\d/.test(str);
-    const hasMultipleElements = /[A-Z].*[A-Z]/.test(str);
+    const hasLowercaseElement = /[A-Z][a-z]/.test(str);
 
-    return hasDigit || hasMultipleElements;
+    // If pure uppercase letters without digits (e.g. STI, HIV, CO, NO):
+    if (!hasDigit && !hasLowercaseElement) {
+      // 3 or more uppercase letters without numbers is almost always an acronym, not chemistry
+      if (str.length > 2) return false;
+      // 2 uppercase letters (like CO, NO): both must be known elements
+      return str.length === 2 && ELEMENT_SYMBOLS.has(str[0]) && ELEMENT_SYMBOLS.has(str[1]);
+    }
+
+    return hasDigit || hasLowercaseElement;
   }
 
   function convertChemToMathJax(str) {
