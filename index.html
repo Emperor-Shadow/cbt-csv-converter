@@ -279,6 +279,20 @@
 
   .hidden { display: none; }
 </style>
+<!-- MathJax 3 configuration with mhchem matching owner-core -->
+<script>
+  window.MathJax = {
+    tex: {
+      inlineMath: [['\\(', '\\)']],
+      displayMath: [['\\[', '\\]']],
+      packages: {'[+]': ['mhchem']},
+      processEscapes: true
+    },
+    loader: { load: ['[tex]/mhchem'] },
+    svg: { fontCache: 'global' }
+  };
+</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
 <body>
 
@@ -354,33 +368,36 @@ What is the chemical formula for water?,H2O,HO2,H3O,H2O2,A
     // 1. Never contains spaces or newlines
     if (/\s/.test(str)) return false;
 
+    // Strip states of matter at the end: (s), (l), (g), (aq)
+    const withoutState = str.replace(/\((aq|s|l|g)\)$/i, '');
+
     // 2. Never contains two consecutive lowercase letters (e.g. Nephew, Cousin, Influenza, Mother)
-    if (/[a-z]{2,}/.test(str)) return false;
+    if (/[a-z]{2,}/.test(withoutState)) return false;
 
     // 3. Must only contain valid chemical formula characters
-    if (!/^[A-Za-z0-9()\[\]+\-]+$/.test(str)) return false;
+    if (!/^[A-Za-z0-9()\[\]+\-^]+$/.test(withoutState)) return false;
 
     // 4. Must start with a capital letter
-    if (!/^[A-Z]/.test(str)) return false;
+    if (!/^[A-Z]/.test(withoutState)) return false;
 
     // 5. Must NOT be a single letter (A, B, C, D are options/answers, not chemical formulas)
-    if (str.length === 1) return false;
+    if (withoutState.length === 1) return false;
 
     // 6. Common abbreviations and acronyms
-    if (/^(STI|HIV|DNA|RNA|AIDS|CBT|WHO|ICT|JAMB|WAEC|NECO|LGA|FCT|CPU|RAM|ROM|USB|PDF|CSV|STIS|AIDS)$/i.test(str)) {
+    if (/^(STI|HIV|DNA|RNA|AIDS|CBT|WHO|ICT|JAMB|WAEC|NECO|LGA|FCT|CPU|RAM|ROM|USB|PDF|CSV|STIS)$/i.test(withoutState)) {
       return false;
     }
 
     // 7. If all uppercase letters with no digits (e.g. STI, HIV, CO, NO):
-    // In chemistry, all-caps without digits only happens for 2-element compounds like CO, NO.
-    // Anything 3 or more uppercase letters without digits is an acronym!
-    if (/^[A-Z]+$/.test(str)) {
-      if (str.length > 2) return false;
-      return str.length === 2 && ELEMENT_SYMBOLS.has(str[0]) && ELEMENT_SYMBOLS.has(str[1]);
+    if (/^[A-Z]+$/.test(withoutState)) {
+      if (withoutState.length > 2) return false;
+      return withoutState.length === 2 && ELEMENT_SYMBOLS.has(withoutState[0]) && ELEMENT_SYMBOLS.has(withoutState[1]);
     }
 
     // 8. Verify all elements in the formula exist in the periodic table
-    const withoutBracketsAndDigits = str.replace(/[()\[\]\d+\-]/g, '');
+    const withoutBracketsAndDigits = withoutState.replace(/[()\[\]\d+\-^]/g, '');
+    if (!withoutBracketsAndDigits) return false;
+
     let elemOnlyLength = 0;
     const elemOnlyPattern = /([A-Z][a-z]?)/g;
     let match;
@@ -392,23 +409,43 @@ What is the chemical formula for water?,H2O,HO2,H3O,H2O2,A
     return elemOnlyLength === withoutBracketsAndDigits.length;
   }
 
+  function isChemicalEquation(str) {
+    str = str.trim();
+    if (!/(\s*->\s*|\s*-->\s*|\s*<=>\s*|\s*<->\s*|[→⇌])/.test(str)) return false;
+    const parts = str.split(/(?:\s*->\s*|\s*-->\s*|\s*<=>\s*|\s*<->\s*|[→⇌\+])/).map(p => p.trim().replace(/^\d+\s*/, '')).filter(Boolean);
+    if (parts.length < 2) return false;
+    return parts.every(p => looksLikeChemFormula(p) || (p.length === 1 && ELEMENT_SYMBOLS.has(p)));
+  }
+
   function convertChemToMathJax(str) {
-    // If the whole cell looks like just a formula
-    // e.g. "H2O", "CO2", "Fe2O3"
-    if (looksLikeChemFormula(str.trim())) {
-      // Convert digits to subscripts: H2O → H_{2}O
-      const ceContent = str.trim().replace(/(\d+)/g, '_{$1}');
-      return `\\(\\ce{${ceContent}}\\)`;
+    if (alreadyWrapped(str)) return str;
+
+    // 1. Entire string is a full chemical reaction equation: e.g. "2H2 + O2 -> 2H2O"
+    if (isChemicalEquation(str)) {
+      return `\\(\\ce{${str}}\\)`;
     }
 
-    // Otherwise try to find formula embedded in text
-    // e.g. "What is the name of H2O in chemistry?"
-    return str.replace(/\b([A-Z][a-z]?\d*(?:[A-Z][a-z]?\d*)+)\b/g, (match) => {
-      if (!looksLikeChemFormula(match)) return match;
-      // Don't double-wrap
-      const ceContent = match.replace(/(\d+)/g, '_{$1}');
-      return `\\(\\ce{${ceContent}}\\)`;
+    // 2. Entire string is a chemical formula or ion: e.g. "H2O", "Ca(OH)2", "NaCl(aq)", "SO4^2-"
+    if (looksLikeChemFormula(str)) {
+      return `\\(\\ce{${str}}\\)`;
+    }
+
+    // 3. Embedded chemical equations inside question text:
+    const eqRegex = /(?:^|\s)([0-9A-Za-z()\[\]^+\-]+\s*(?:\+\s*[0-9A-Za-z()\[\]^+\-]+\s*)*(?:->|-->|<=>|<->|→|⇌)\s*[0-9A-Za-z()\[\]^+\-]+(?:\s*\+\s*[0-9A-Za-z()\[\]^+\-]*)*)(?=[.,?!\s]|$)/g;
+    str = str.replace(eqRegex, (match, eq) => {
+      if (isChemicalEquation(eq)) return ` \\(\\ce{${eq}}\\)`;
+      return match;
     });
+
+    // 4. Embedded chemical formulas (skip text segments already inside \(...\))
+    const segments = str.split(/(\\\(.*?\\\))/);
+    return segments.map((seg, idx) => {
+      if (idx % 2 === 1) return seg; // already in \(...\)
+      return seg.replace(/\b([A-Z][a-zA-Z0-9()\[\]^+\-]*)\b/g, (match) => {
+        if (looksLikeChemFormula(match)) return `\\(\\ce{${match}}\\)`;
+        return match;
+      });
+    }).join('');
   }
 
   // ─────────────────────────────────────────────
@@ -723,6 +760,13 @@ What is the chemical formula for water?,H2O,HO2,H3O,H2O2,A
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
+
+    // Render live MathJax formulas and equations in preview table
+    if (window.MathJax && typeof MathJax.typesetPromise === 'function') {
+      setTimeout(() => {
+        MathJax.typesetPromise([table]).catch(err => console.warn('[MathJax] Typeset error:', err));
+      }, 50);
+    }
 
     // Stats
     document.getElementById('statsRow').innerHTML = `
