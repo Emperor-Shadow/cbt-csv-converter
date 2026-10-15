@@ -363,50 +363,71 @@ What is the chemical formula for water?,H2O,HO2,H3O,H2O2,A
     'Fr','Ra','Ac','Th','Pa','U','Np','Pu','Am','Cm','Bk','Cf','Es','Fm','Md','No','Lr'
   ]);
 
+  const ENGLISH_COLLISIONS = new Set([
+    'No', 'In', 'At', 'As', 'He', 'Be', 'Am', 'I', 'A', 'An', 'Is', 'It', 'If', 'Or', 'So', 'To', 'Do', 'Go', 'Me', 'My', 'By', 'Up', 'Us', 'We', 'Of',
+    'NO', 'IN', 'AT', 'AS', 'HE', 'BE', 'AM', 'IS', 'IT', 'IF', 'OR', 'SO', 'TO', 'DO', 'GO', 'ME', 'MY', 'BY', 'UP', 'US', 'WE', 'OF'
+  ]);
+
   function looksLikeChemFormula(str) {
     str = str.trim();
     // 1. Never contains spaces or newlines
     if (/\s/.test(str)) return false;
 
     // Strip states of matter at the end: (s), (l), (g), (aq)
+    const hasState = /\((aq|s|l|g)\)$/i.test(str);
     const withoutState = str.replace(/\((aq|s|l|g)\)$/i, '');
 
-    // 2. Never contains two consecutive lowercase letters (e.g. Nephew, Cousin, Influenza, Mother)
+    // 2. Reject common English words that collide with element symbols (e.g. "No" for Nobelium, "In" for Indium)
+    if (ENGLISH_COLLISIONS.has(withoutState)) return false;
+
+    // 3. Never contains two consecutive lowercase letters (e.g. Nephew, Cousin, Influenza, Mother)
     if (/[a-z]{2,}/.test(withoutState)) return false;
 
-    // 3. Must only contain valid chemical formula characters
+    // 4. Must only contain valid chemical formula characters
     if (!/^[A-Za-z0-9()\[\]+\-^]+$/.test(withoutState)) return false;
 
-    // 4. Must start with a capital letter
+    // 5. Must start with a capital letter
     if (!/^[A-Z]/.test(withoutState)) return false;
 
-    // 5. Must NOT be a single letter (A, B, C, D are options/answers, not chemical formulas)
+    // 6. Must NOT be a single letter (A, B, C, D are options/answers, not chemical formulas)
     if (withoutState.length === 1) return false;
 
-    // 6. Common abbreviations and acronyms
+    // 7. Common abbreviations and acronyms
     if (/^(STI|HIV|DNA|RNA|AIDS|CBT|WHO|ICT|JAMB|WAEC|NECO|LGA|FCT|CPU|RAM|ROM|USB|PDF|CSV|STIS)$/i.test(withoutState)) {
       return false;
     }
 
-    // 7. If all uppercase letters with no digits (e.g. STI, HIV, CO, NO):
+    const hasDigits = /\d/.test(withoutState);
+    const hasCharge = /[+\-^]/.test(withoutState);
+
+    // 8. If all uppercase letters with no digits (e.g. STI, HIV, CO, NO):
     if (/^[A-Z]+$/.test(withoutState)) {
       if (withoutState.length > 2) return false;
       return withoutState.length === 2 && ELEMENT_SYMBOLS.has(withoutState[0]) && ELEMENT_SYMBOLS.has(withoutState[1]);
     }
 
-    // 8. Verify all elements in the formula exist in the periodic table
+    // 9. Verify all elements in the formula exist in the periodic table
     const withoutBracketsAndDigits = withoutState.replace(/[()\[\]\d+\-^]/g, '');
     if (!withoutBracketsAndDigits) return false;
 
+    let elemCount = 0;
     let elemOnlyLength = 0;
     const elemOnlyPattern = /([A-Z][a-z]?)/g;
     let match;
     while ((match = elemOnlyPattern.exec(withoutBracketsAndDigits)) !== null) {
       if (!ELEMENT_SYMBOLS.has(match[1])) return false;
+      elemCount++;
       elemOnlyLength += match[1].length;
     }
+    if (elemOnlyLength !== withoutBracketsAndDigits.length) return false;
 
-    return elemOnlyLength === withoutBracketsAndDigits.length;
+    // 10. Standalone single element symbol with NO digits, NO charge, and NO state (e.g. "No", "He", "Fe")
+    // In prose, standalone symbols without subscripts/charges are almost always plain text
+    if (elemCount === 1 && !hasDigits && !hasCharge && !hasState) {
+      return false;
+    }
+
+    return true;
   }
 
   function isChemicalEquation(str) {
